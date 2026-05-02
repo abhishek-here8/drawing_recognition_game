@@ -8,21 +8,34 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not set in environment variables' });
 
-  const body = JSON.stringify(req.body);
+  const { imageData } = req.body;
+  if (!imageData) return res.status(400).json({ error: 'No image data provided' });
+
+  const prompt = `You are an expert AI that analyzes hand-drawn images and identifies what single character was drawn.
+The drawing may be a digit (0-9), uppercase letter (A-Z), lowercase letter (a-z), or symbol (@,#,$,%,&,!,?,+,=,*,~ etc).
+Respond ONLY with a valid JSON object, no markdown, no backticks:
+{"character":"the single character","type":"Digit | Uppercase Letter | Lowercase Letter | Symbol","confidence":0.0,"alternatives":["up to 3 others"],"description":"one sentence"}`;
+
+  const body = JSON.stringify({
+    contents: [{
+      parts: [
+        { text: prompt },
+        { inline_data: { mime_type: 'image/jpeg', data: imageData } }
+      ]
+    }]
+  });
 
   const options = {
-    hostname: 'api.anthropic.com',
-    path: '/v1/messages',
+    hostname: 'generativelanguage.googleapis.com',
+    path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(body),
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
+      'Content-Length': Buffer.byteLength(body)
+    }
   };
 
   return new Promise((resolve) => {
@@ -30,14 +43,21 @@ module.exports = async function handler(req, res) {
       let data = '';
       apiRes.on('data', chunk => data += chunk);
       apiRes.on('end', () => {
-        res.status(apiRes.statusCode).json(JSON.parse(data));
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.error) {
+            res.status(500).json({ error: parsed.error.message });
+          } else {
+            const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            res.status(200).json({ text });
+          }
+        } catch (e) {
+          res.status(500).json({ error: 'Failed to parse response: ' + data });
+        }
         resolve();
       });
     });
-    apiReq.on('error', (err) => {
-      res.status(500).json({ error: err.message });
-      resolve();
-    });
+    apiReq.on('error', (err) => { res.status(500).json({ error: err.message }); resolve(); });
     apiReq.write(body);
     apiReq.end();
   });
