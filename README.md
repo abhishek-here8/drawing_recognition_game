@@ -1,2 +1,2 @@
 #AI DRAWING RECOGNITION GAME
-**Draw anything you want among-->
+*Draw anything you want among-->
